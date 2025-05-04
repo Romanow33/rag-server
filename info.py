@@ -1,7 +1,16 @@
 import os
 import logging
 import asyncio
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Form
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    BackgroundTasks,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+    Form,
+)
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
@@ -14,6 +23,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.docstore.document import Document
 from typing import List, Dict
+from fastapi.middleware.cors import CORSMiddleware
 
 # ── Load env variables ────────────────────────────────────────────────────────
 load_dotenv()
@@ -32,10 +42,18 @@ embedding = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 llm = ChatOpenAI(
     model=os.getenv("OPENROUTER_MODEL"),
     openai_api_base=os.getenv("OPENROUTER_BASE_URL"),
-    openai_api_key=os.getenv("OPENROUTER_API_KEY")
+    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
 )
 
 app = FastAPI(title="RAG con Qdrant + OpenRouter")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 🔥 permite todos los orígenes
+    allow_credentials=False,  # ⚠️ si lo pones en True, no puedes usar "*" en allow_origins
+    allow_methods=["*"],  # permite todos los métodos (GET, POST, etc.)
+    allow_headers=["*"],  # permite todas las cabeceras
+)
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logger = logging.getLogger("uvicorn")
@@ -43,6 +61,7 @@ logger.setLevel(logging.INFO)
 
 # ── WebSocket Conexiones ───────────────────────────────────────────────────────
 active_connections: Dict[str, WebSocket] = {}
+
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -53,6 +72,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             await websocket.receive_text()  # Mantener la conexión viva
     except WebSocketDisconnect:
         active_connections.pop(client_id, None)
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -68,8 +88,10 @@ async def startup_event():
 
     print(f"✅ Directorio {TEMP_DIR} disponible y con permisos de escritura.")
 
+
 class AskRequest(BaseModel):
     question: str
+
 
 async def send_ws_message(client_id: str, message: str):
     websocket = active_connections.get(client_id)
@@ -78,6 +100,7 @@ async def send_ws_message(client_id: str, message: str):
             await websocket.send_text(message)
         except Exception as e:
             logger.warning(f"⚠️ Error enviando mensaje WS a {client_id}: {e}")
+
 
 def insert_documents(documents: List[Document], client_id: str, loop):
     if COLLECTION_NAME not in [
@@ -97,15 +120,15 @@ def insert_documents(documents: List[Document], client_id: str, loop):
 
     # Notificar al cliente por WebSocket al terminar
     future = asyncio.run_coroutine_threadsafe(
-        send_ws_message(client_id, "✅ PDF procesado e insertado en Qdrant."),
-        loop
+        send_ws_message(client_id, "✅ PDF procesado e insertado en Qdrant."), loop
     )
+
 
 @app.post("/upload_pdf", status_code=202)
 async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    client_id: str = Form(...)
+    client_id: str = Form(...),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se permiten PDFs.")
@@ -124,6 +147,7 @@ async def upload_pdf(
     background_tasks.add_task(insert_documents, docs, client_id, loop)
 
     return {"message": f"'{file.filename}' recibido. Ingesta en Qdrant programada."}
+
 
 @app.post("/ask")
 async def ask(request: AskRequest):
