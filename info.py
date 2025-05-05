@@ -1,15 +1,11 @@
 import os
 import logging
-import asyncio
 from fastapi import (
     FastAPI,
     UploadFile,
     File,
     BackgroundTasks,
     HTTPException,
-    WebSocket,
-    WebSocketDisconnect,
-    Form,
 )
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -22,7 +18,7 @@ from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.docstore.document import Document
-from typing import List, Dict
+from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 
 # ── Load env variables ────────────────────────────────────────────────────────
@@ -59,20 +55,6 @@ app.add_middleware(
 logger = logging.getLogger("uvicorn")
 logger.setLevel(logging.INFO)
 
-# ── WebSocket Conexiones ───────────────────────────────────────────────────────
-active_connections: Dict[str, WebSocket] = {}
-
-
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    await websocket.accept()
-    active_connections[client_id] = websocket
-    try:
-        while True:
-            await websocket.receive_text()  # Mantener la conexión viva
-    except WebSocketDisconnect:
-        active_connections.pop(client_id, None)
-
 
 @app.on_event("startup")
 async def startup_event():
@@ -93,16 +75,7 @@ class AskRequest(BaseModel):
     question: str
 
 
-async def send_ws_message(client_id: str, message: str):
-    websocket = active_connections.get(client_id)
-    if websocket:
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            logger.warning(f"⚠️ Error enviando mensaje WS a {client_id}: {e}")
-
-
-def insert_documents(documents: List[Document], client_id: str, loop):
+def insert_documents(documents: List[Document]):
     if COLLECTION_NAME not in [
         c.name for c in qdrant_client.get_collections().collections
     ]:
@@ -118,17 +91,11 @@ def insert_documents(documents: List[Document], client_id: str, loop):
     )
     vectorstore.add_documents(documents)
 
-    # Notificar al cliente por WebSocket al terminar
-    future = asyncio.run_coroutine_threadsafe(
-        send_ws_message(client_id, "✅ PDF procesado e insertado en Qdrant."), loop
-    )
-
 
 @app.post("/upload_pdf", status_code=202)
 async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    client_id: str = Form(...),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se permiten PDFs.")
@@ -143,8 +110,7 @@ async def upload_pdf(
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     docs = splitter.split_documents(pages)
 
-    loop = asyncio.get_event_loop()
-    background_tasks.add_task(insert_documents, docs, client_id, loop)
+    background_tasks.add_task(insert_documents, docs)
 
     return {"message": f"'{file.filename}' recibido. Ingesta en Qdrant programada."}
 
