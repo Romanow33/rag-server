@@ -28,7 +28,7 @@ QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
-TEMP_DIR = "temp"
+TEMP_DIR = "/tmp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # ── Inicializar servicios ─────────────────────────────────────────────────────
@@ -76,20 +76,24 @@ class AskRequest(BaseModel):
 
 
 def insert_documents(documents: List[Document]):
-    if COLLECTION_NAME not in [
-        c.name for c in qdrant_client.get_collections().collections
-    ]:
-        qdrant_client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-        )
+    try:
+        if COLLECTION_NAME not in [
+            c.name for c in qdrant_client.get_collections().collections
+        ]:
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
 
-    vectorstore = LangchainQdrant(
-        client=qdrant_client,
-        collection_name=COLLECTION_NAME,
-        embeddings=embedding,
-    )
-    vectorstore.add_documents(documents)
+        vectorstore = LangchainQdrant(
+            client=qdrant_client,
+            collection_name=COLLECTION_NAME,
+            embeddings=embedding,
+        )
+        vectorstore.add_documents(documents)
+        print("Documentos insertados exitosamente.")
+    except Exception as e:
+        print(f"Error al insertar documentos: {e}")
 
 
 @app.post("/upload_pdf", status_code=202)
@@ -103,7 +107,9 @@ async def upload_pdf(
     # Guardar PDF
     pdf_path = os.path.join(TEMP_DIR, file.filename)
     with open(pdf_path, "wb") as f:
-        f.write(await file.read())
+        content = await file.read()
+        f.write(content)
+        print(f"Archivo guardado en: {pdf_path} ({len(content)} bytes)")
 
     # Cargar y trocear
     pages = PyPDFLoader(pdf_path).load()
