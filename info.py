@@ -1,4 +1,4 @@
-import os
+import asyncio, os
 import logging
 from fastapi import (
     FastAPI,
@@ -6,6 +6,7 @@ from fastapi import (
     File,
     BackgroundTasks,
     HTTPException,
+    Form
 )
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -18,8 +19,10 @@ from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.docstore.document import Document
-from typing import List
+from typing import List, Dict
 from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 # ── Load env variables ────────────────────────────────────────────────────────
 load_dotenv()
@@ -55,6 +58,29 @@ app.add_middleware(
 logger = logging.getLogger("uvicorn")
 logger.setLevel(logging.INFO)
 
+# ——————————————————————————
+# 1) ConnectionManager para SSE
+# ——————————————————————————
+class ConnectionManager:
+    def __init__(self):
+        self.active: Dict[str, List[asyncio.Queue]] = {}
+
+    async def connect(self, upload_id: str) -> asyncio.Queue:
+        q = asyncio.Queue()
+        self.active.setdefault(upload_id, []).append(q)
+        return q
+
+    def disconnect(self, upload_id: str, q: asyncio.Queue):
+        lst = self.active.get(upload_id, [])
+        if q in lst: lst.remove(q)
+        if not lst: self.active.pop(upload_id, None)
+
+    async def send(self, upload_id: str, message: str):
+        for q in self.active.get(upload_id, []):
+            await q.put(message)
+
+manager = ConnectionManager()
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -76,50 +102,88 @@ class AskRequest(BaseModel):
 
 
 def insert_documents(documents: List[Document]):
-    try:
-        if COLLECTION_NAME not in [
-            c.name for c in qdrant_client.get_collections().collections
-        ]:
-            qdrant_client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-            )
-
-        vectorstore = LangchainQdrant(
-            client=qdrant_client,
+    if COLLECTION_NAME not in [
+        c.name for c in qdrant_client.get_collections().collections
+    ]:
+        qdrant_client.create_collection(
             collection_name=COLLECTION_NAME,
-            embeddings=embedding,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
-        vectorstore.add_documents(documents)
-        print("Documentos insertados exitosamente.")
-    except Exception as e:
-        print(f"Error al insertar documentos: {e}")
 
+    vectorstore = LangchainQdrant(
+        client=qdrant_client,
+        collection_name=COLLECTION_NAME,
+        embeddings=embedding,
+    )
+    vectorstore.add_documents(documents)
+
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: Dict[str, List[asyncio.Queue]] = {}
+
+    async def connect(self, upload_id: str) -> asyncio.Queue:
+        q = asyncio.Queue()
+        self.active.setdefault(upload_id, []).append(q)
+        return q
+
+    def disconnect(self, upload_id: str, q: asyncio.Queue):
+        lst = self.active.get(upload_id, [])
+        if q in lst: lst.remove(q)
+        if not lst: self.active.pop(upload_id, None)
+
+    async def send(self, upload_id: str, message: str):
+        for q in self.active.get(upload_id, []):
+            await q.put(message)
+
+manager = ConnectionManager()
+
+@app.get("/notifications/{upload_id}")
+async def notifications(upload_id: str):
+    q = await manager.connect(upload_id)
+
+    async def event_generator():
+        try:
+            while True:
+                msg = await q.get()
+                # enviamos el evento al cliente
+                yield {"data": msg}
+                # si es el mensaje de finalización, salimos del bucle
+                if msg == "completed":
+                    break
+        except asyncio.CancelledError:
+            # cliente se desconectó antes
+            pass
+        finally:
+            # limpiar la suscripción
+            manager.disconnect(upload_id, q)
+
+    # ping=0 para no enmascarar eventos con comentarios
+    return EventSourceResponse(event_generator(), ping=0)
+
+async def process_and_notify(docs: List[Document], upload_id: str):
+    # insert_documents corre en un hilo
+    await run_in_threadpool(insert_documents, docs)
+    # luego enviamos el evento
+    await manager.send(upload_id, "completed")
 
 @app.post("/upload_pdf", status_code=202)
 async def upload_pdf(
     background_tasks: BackgroundTasks,
+    upload_id: str = Form(...),
     file: UploadFile = File(...),
 ):
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Solo se permiten PDFs.")
-
-    # Guardar PDF
-    pdf_path = os.path.join(TEMP_DIR, file.filename)
+        raise HTTPException(400, "Solo se permiten PDFs.")
+    pdf_path = os.path.join("/tmp", file.filename)
     with open(pdf_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-        print(f"Archivo guardado en: {pdf_path} ({len(content)} bytes)")
-
-    # Cargar y trocear
+        f.write(await file.read())
     pages = PyPDFLoader(pdf_path).load()
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     docs = splitter.split_documents(pages)
-
-    background_tasks.add_task(insert_documents, docs)
-
-    return {"message": f"'{file.filename}' recibido. Ingesta en Qdrant programada."}
-
+    # Una sola tarea: inserta y luego notifica
+    background_tasks.add_task(process_and_notify, docs, upload_id)
+    return {"message": f"'{file.filename}' recibido. Ingesta programada."}
 
 @app.post("/ask")
 async def ask(request: AskRequest):
