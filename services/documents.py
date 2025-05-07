@@ -6,7 +6,7 @@ from fastapi import UploadFile
 async def process_pdf(file: UploadFile):
     if not file.filename.lower().endswith(".pdf"):
         raise ValueError("Solo se permiten PDFs.")
-    path = os.path.join("/tmp", file.filename)
+    path = os.path.basename(file.filename)
     with open(path, "wb") as f:
         f.write(await file.read())
     pages = PyPDFLoader(path).load()
