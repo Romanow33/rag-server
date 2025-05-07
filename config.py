@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 import logging
+from qdrant_client.models import Distance, VectorParams
+from services.qdrant_client import client
 
 load_dotenv()
 
@@ -20,10 +22,7 @@ logger.setLevel(logging.INFO)
 
 
 async def startup_check():
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams
 
-    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     try:
         collections = client.get_collections().collections
         logger.info("✅ Conexión a Qdrant exitosa.")
