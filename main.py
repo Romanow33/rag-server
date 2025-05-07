@@ -1,13 +1,33 @@
-import asyncio, os
-import logging
-from fastapi import (
-    FastAPI,
-    UploadFile,
-    File,
-    BackgroundTasks,
-    HTTPException,
-    Form
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from routes import upload, ask
+from sse import manager
+from config import TEMP_DIR, startup_check
+
+app = FastAPI(title="RAG con Qdrant + OpenRouter")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    await startup_check()
+
+
+app.include_router(upload.router)
+app.include_router(ask.router)
+app.include_router(manager.router)
+
+
+""" import asyncio, os
+import logging
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, Form
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
@@ -58,6 +78,7 @@ app.add_middleware(
 logger = logging.getLogger("uvicorn")
 logger.setLevel(logging.INFO)
 
+
 # ——————————————————————————
 # 1) ConnectionManager para SSE
 # ——————————————————————————
@@ -72,12 +93,15 @@ class ConnectionManager:
 
     def disconnect(self, upload_id: str, q: asyncio.Queue):
         lst = self.active.get(upload_id, [])
-        if q in lst: lst.remove(q)
-        if not lst: self.active.pop(upload_id, None)
+        if q in lst:
+            lst.remove(q)
+        if not lst:
+            self.active.pop(upload_id, None)
 
     async def send(self, upload_id: str, message: str):
         for q in self.active.get(upload_id, []):
             await q.put(message)
+
 
 manager = ConnectionManager()
 
@@ -95,10 +119,6 @@ async def startup_event():
         raise RuntimeError(f"❌ No se puede escribir en {TEMP_DIR}.")
 
     print(f"✅ Directorio {TEMP_DIR} disponible y con permisos de escritura.")
-
-
-class AskRequest(BaseModel):
-    question: str
 
 
 def insert_documents(documents: List[Document]):
@@ -129,14 +149,18 @@ class ConnectionManager:
 
     def disconnect(self, upload_id: str, q: asyncio.Queue):
         lst = self.active.get(upload_id, [])
-        if q in lst: lst.remove(q)
-        if not lst: self.active.pop(upload_id, None)
+        if q in lst:
+            lst.remove(q)
+        if not lst:
+            self.active.pop(upload_id, None)
 
     async def send(self, upload_id: str, message: str):
         for q in self.active.get(upload_id, []):
             await q.put(message)
 
+
 manager = ConnectionManager()
+
 
 @app.get("/notifications/{upload_id}")
 async def notifications(upload_id: str):
@@ -161,11 +185,13 @@ async def notifications(upload_id: str):
     # ping=0 para no enmascarar eventos con comentarios
     return EventSourceResponse(event_generator(), ping=0)
 
+
 async def process_and_notify(docs: List[Document], upload_id: str):
     # insert_documents corre en un hilo
     await run_in_threadpool(insert_documents, docs)
     # luego enviamos el evento
     await manager.send(upload_id, "completed")
+
 
 @app.post("/upload_pdf", status_code=202)
 async def upload_pdf(
@@ -185,6 +211,11 @@ async def upload_pdf(
     background_tasks.add_task(process_and_notify, docs, upload_id)
     return {"message": f"'{file.filename}' recibido. Ingesta programada."}
 
+
+class AskRequest(BaseModel):
+    question: str
+
+
 @app.post("/ask")
 async def ask(request: AskRequest):
     vectorstore = LangchainQdrant(
@@ -199,3 +230,4 @@ async def ask(request: AskRequest):
     answer = qa_chain.run(request.question)
     logger.info("❓ Pregunta: %s → respuesta generada", request.question)
     return {"question": request.question, "answer": answer}
+ """
