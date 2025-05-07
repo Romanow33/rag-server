@@ -21,13 +21,24 @@ logger.setLevel(logging.INFO)
 
 async def startup_check():
     from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, VectorParams
 
     client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     try:
-        _ = client.get_collections()
+        collections = client.get_collections().collections
         logger.info("✅ Conexión a Qdrant exitosa.")
-    except Exception as e:
-        logger.error("❌ Error al conectar a Qdrant: %s", e, exc_info=True)
 
-    if not os.path.exists(TEMP_DIR) or not os.access(TEMP_DIR, os.W_OK):
-        raise RuntimeError(f"❌ No se puede escribir en {TEMP_DIR}.")
+        # Verifica si existe la colección, si no, la crea
+        if COLLECTION_NAME not in [c.name for c in collections]:
+            logger.info("📁 La colección '%s' no existe. Creándola…", COLLECTION_NAME)
+            client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+            logger.info("✅ Colección '%s' creada exitosamente.", COLLECTION_NAME)
+        else:
+            logger.info("📁 La colección '%s' ya existe.", COLLECTION_NAME)
+
+    except Exception as e:
+        logger.error("❌ Error al conectar o inicializar Qdrant: %s", e, exc_info=True)
+        raise RuntimeError("No se pudo conectar a Qdrant.")
