@@ -21,7 +21,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
 ):
     try:
-        docs = await process_pdf(file)
+        docs = await process_pdf(file, upload_id)  # Pasa upload_id
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
