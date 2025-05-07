@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime, timedelta
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
-from config import QDRANT_URL, QDRANT_API_KEY, COLLECTION_NAME, logger
+from qdrant_client.models import Filter, FieldCondition, DatetimeRange
+from app.config import QDRANT_URL, QDRANT_API_KEY, COLLECTION_NAME, logger
 
 client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
@@ -11,32 +11,27 @@ async def cleanup_job():
     while True:
         try:
             threshold = datetime.utcnow() - timedelta(minutes=20)
+
             filter_ = Filter(
                 must=[
-                    FieldCondition(
-                        key="timestamp",
-                        range=MatchValue(value=str(threshold.isoformat())),
-                    )
+                    FieldCondition(key="timestamp", range=DatetimeRange(lt=threshold))
                 ]
             )
 
-            # Obtener los puntos que cumplen el filtro
-            response = client.search(
-                collection_name=COLLECTION_NAME,
-                query_vector=[],  # No se necesita un vector de consulta para este caso
-                filter=filter_,
-                limit=100,  # Obtener los primeros 100 documentos que coincidan con el filtro
+            hits = client.scroll(
+                collection_name=COLLECTION_NAME, filter=filter_, limit=100
             )
-            ids_to_delete = [point.id for point in response.result]  # Extraer los ids
+
+            ids_to_delete = [
+                point.id for point in hits[0]
+            ]  # hits[0] contiene los puntos
 
             if ids_to_delete:
-                # Eliminar los puntos seleccionados
                 client.delete(
                     collection_name=COLLECTION_NAME,
-                    points_selector=ids_to_delete,  # Aquí estamos pasando los puntos a eliminar
+                    points_selector={"points": ids_to_delete},
                     wait=True,
                 )
-
                 logger.info(
                     f"🧹 Cleanup ejecutado: eliminados {len(ids_to_delete)} documentos."
                 )
@@ -44,7 +39,8 @@ async def cleanup_job():
                 logger.info(
                     "🧹 Cleanup ejecutado: no se encontraron documentos para eliminar."
                 )
+
         except Exception as e:
             logger.error("❌ Error en cleanup_job: %s", e, exc_info=True)
 
-        await asyncio.sleep(60 * 5)  # Corre cada 5 minutos
+        await asyncio.sleep(60 * 5)  # Espera 5 minutos antes de volver a ejecutar
