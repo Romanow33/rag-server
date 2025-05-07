@@ -2,7 +2,11 @@ import asyncio
 from datetime import datetime, timedelta
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, DatetimeRange
-from config import QDRANT_URL, QDRANT_API_KEY, COLLECTION_NAME, logger
+from config import COLLECTION_NAME, logger
+import os
+
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
