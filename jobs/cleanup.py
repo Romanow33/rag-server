@@ -15,15 +15,36 @@ async def cleanup_job():
                 must=[
                     FieldCondition(
                         key="timestamp",
-                        match=MatchValue(value=str(threshold.isoformat())),
+                        range=MatchValue(value=str(threshold.isoformat())),
                     )
                 ]
             )
 
-            client.delete(collection_name=COLLECTION_NAME, filter=filter_, wait=True)
+            # Obtener los puntos que cumplen el filtro
+            response = client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=[],  # No se necesita un vector de consulta para este caso
+                filter=filter_,
+                limit=100,  # Obtener los primeros 100 documentos que coincidan con el filtro
+            )
+            ids_to_delete = [point.id for point in response.result]  # Extraer los ids
 
-            logger.info("🧹 Cleanup ejecutado: documentos viejos eliminados.")
+            if ids_to_delete:
+                # Eliminar los puntos seleccionados
+                client.delete(
+                    collection_name=COLLECTION_NAME,
+                    points_selector=ids_to_delete,  # Aquí estamos pasando los puntos a eliminar
+                    wait=True,
+                )
+
+                logger.info(
+                    f"🧹 Cleanup ejecutado: eliminados {len(ids_to_delete)} documentos."
+                )
+            else:
+                logger.info(
+                    "🧹 Cleanup ejecutado: no se encontraron documentos para eliminar."
+                )
         except Exception as e:
             logger.error("❌ Error en cleanup_job: %s", e, exc_info=True)
 
-        await asyncio.sleep(60 * 5)
+        await asyncio.sleep(60 * 5)  # Corre cada 5 minutos
