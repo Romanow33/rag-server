@@ -5,7 +5,9 @@ https://github.com/Romanow33/rag-client
 
 # 🧠 AI - OpenRouter - RAG Server
 
-[Ver demo]([https://openrouter.ai/](https://drive.google.com/file/d/1QMOcws2mze155BwLHuWQoi7yqx76QcxZ/view?usp=sharing))
+[Ver demo](https://drive.google.com/file/d/1QMOcws2mze155BwLHuWQoi7yqx76QcxZ/view?usp=sharing)
+
+---
 Servidor simple de recuperación aumentada con generación (RAG) utilizando [OpenRouter](https://openrouter.ai/) y [Qdrant](https://qdrant.tech/).
 
 ---
