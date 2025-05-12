@@ -1,3 +1,11 @@
+# Client REPO:
+
+https://github.com/Romanow33/rag-client
+
+[![Ver demo](ruta-a-thumbnail.jpg)]( https://drive.google.com/file/d/1QMOcws2mze155BwLHuWQoi7yqx76QcxZ/view?usp=sharing)
+ 
+
+
 # 🧠 AI - OpenRouter - RAG Server
 
 Servidor simple de recuperación aumentada con generación (RAG) utilizando [OpenRouter](https://openrouter.ai/) y [Qdrant](https://qdrant.tech/).
